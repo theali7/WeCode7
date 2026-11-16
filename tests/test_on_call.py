@@ -14,6 +14,24 @@ def alert():
             "annotations": {"summary": "Database not ready"}}
 
 class OnCallTests(unittest.TestCase):
+    def test_single_read_only_grafana_token_proxy_configuration(self):
+        from on_call.worker import cloud_configuration
+        env = {"ONCALL_GRAFANA_URL": "https://stack.grafana.net",
+               "ONCALL_GRAFANA_TOKEN": "fixture", "ONCALL_GRAFANA_PROXY": "1",
+               "ONCALL_PROMETHEUS_DATASOURCE_UID": "prom-uid",
+               "ONCALL_LOKI_DATASOURCE_UID": "loki-uid"}
+        cloud, metrics, logs = cloud_configuration(env)
+        self.assertEqual(metrics, "https://stack.grafana.net/api/datasources/proxy/uid/prom-uid")
+        self.assertTrue(logs.endswith("/loki-uid"))
+        self.assertEqual(cloud["alerts"], cloud["metrics"])
+        self.assertEqual(cloud["alerts"], cloud["logs"])
+        for invalid in ("https://user:secret@stack.grafana.net", "http://stack.grafana.net"):
+            with self.assertRaises(ValueError):
+                cloud_configuration({**env, "ONCALL_GRAFANA_URL": invalid})
+        with self.assertRaises(ValueError):
+            cloud_configuration({**env, "ONCALL_LOKI_DATASOURCE_UID": "../secret"})
+        self.assertEqual(cloud_configuration({}), (None, None, None))
+
     def test_cloud_alert_dispatch_and_credentials_are_separate(self):
         from on_call.worker import fetch
         with self.assertRaises(ValueError):

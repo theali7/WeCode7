@@ -56,3 +56,12 @@ they do not collect or export telemetry yet. Existing Render configuration and
 the local root compose.yaml are unchanged. Server provisioning, registry
 publishing, manual GitHub Actions promotion, telemetry, dashboards, alerts, and
 an AI responder are still pending. Existing tests must pass before deployment.
+
+## Automated isolation verification
+
+The Development and production isolation workflow builds one image and starts two
+disposable Compose projects on GitHub Actions. It checks database health, separate
+networks and volumes, successful authentication in each account's own environment,
+and rejection of cross-environment credentials and tokens in both directions.
+It removes its disposable volumes afterward. This verifies the deployment pattern;
+it does not provision persistent public development or production servers.

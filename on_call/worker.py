@@ -136,6 +136,47 @@ def poll(prometheus, loki, repo, state_dir, command, timeout=300, retry_seconds=
             temporary.replace(path)
         return {"handled": handled, "failed": sum(item.get("status") == "failed" for item in state.values())}
 
+def cloud_configuration(environ):
+    """Return cloud authentication and query endpoints without changing environment."""
+    if not environ.get("ONCALL_GRAFANA_URL"):
+        return None, None, None
+    grafana = environ["ONCALL_GRAFANA_URL"].rstrip("/")
+    parsed = urlsplit(grafana)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+            or parsed.password or parsed.query or parsed.fragment):
+        raise ValueError("Grafana requires an HTTPS base URL without embedded credentials")
+    token = environ["ONCALL_GRAFANA_TOKEN"]
+    if not token.strip():
+        raise ValueError("Grafana token cannot be empty")
+    bearer = "Bearer " + token
+    cloud = {"alerts_url": grafana + "/api/alertmanager/grafana/api/v2/alerts",
+             "alerts": bearer}
+    if environ.get("ONCALL_GRAFANA_PROXY") == "1":
+        import re
+        def proxy(key):
+            uid = environ[key]
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", uid):
+                raise ValueError("Invalid data source UID")
+            return grafana + "/api/datasources/proxy/uid/" + uid
+        prometheus = proxy("ONCALL_PROMETHEUS_DATASOURCE_UID")
+        loki = proxy("ONCALL_LOKI_DATASOURCE_UID")
+        cloud.update(metrics=bearer, logs=bearer)
+    else:
+        import base64
+        def basic(prefix):
+            user, secret = environ[prefix + "_USER"], environ[prefix + "_TOKEN"]
+            if not user or not secret:
+                raise ValueError("Cloud credentials cannot be empty")
+            return "Basic " + base64.b64encode((user + ":" + secret).encode()).decode()
+        prometheus, loki = environ["PROMETHEUS_URL"], environ["LOKI_URL"]
+        for endpoint in (prometheus, loki):
+            parsed = urlsplit(endpoint)
+            if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+                    or parsed.password or parsed.query or parsed.fragment):
+                raise ValueError("Cloud telemetry requires HTTPS endpoints without embedded credentials")
+        cloud.update(metrics=basic("ONCALL_METRICS"), logs=basic("ONCALL_LOGS"))
+    return cloud, prometheus, loki
+
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -146,29 +187,11 @@ def main():
         raise SystemExit("ONCALL_AGENT_COMMAND must be a JSON argv array")
     repo = Path(os.environ.get("ONCALL_REPOSITORY", str(Path(__file__).resolve().parents[1]))).resolve()
     state = Path(os.environ.get("ONCALL_STATE_DIRECTORY", str(Path.home() / ".local/state/wecode-oncall")))
-    cloud = None
-    if os.environ.get("ONCALL_GRAFANA_URL"):
-        import base64
-        def basic(prefix):
-            user, token = os.environ[prefix + "_USER"], os.environ[prefix + "_TOKEN"]
-            if not user or not token:
-                raise ValueError("Cloud credentials cannot be empty")
-            return "Basic " + base64.b64encode((user + ":" + token).encode()).decode()
-        cloud = {
-            "alerts_url": os.environ["ONCALL_GRAFANA_URL"].rstrip("/") + "/api/alertmanager/grafana/api/v2/alerts",
-            "alerts": "Bearer " + os.environ["ONCALL_GRAFANA_TOKEN"],
-            "metrics": basic("ONCALL_METRICS"),
-            "logs": basic("ONCALL_LOGS"),
-        }
-        if not os.environ["ONCALL_GRAFANA_TOKEN"]:
-            raise ValueError("Grafana token cannot be empty")
-        for name in ("PROMETHEUS_URL", "LOKI_URL"):
-            if urlsplit(os.environ[name]).scheme != "https":
-                raise ValueError("Cloud telemetry requires explicit HTTPS endpoints")
+    cloud, cloud_prometheus, cloud_loki = cloud_configuration(os.environ)
     while True:
         try:
-            result = poll(os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090"),
-                          os.environ.get("LOKI_URL", "http://127.0.0.1:3100"), repo, state, command, cloud=cloud)
+            result = poll(cloud_prometheus or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090"),
+                          cloud_loki or os.environ.get("LOKI_URL", "http://127.0.0.1:3100"), repo, state, command, cloud=cloud)
             print(json.dumps(result), flush=True)
             if args.once:
                 raise SystemExit(1 if result.get("failed") else 0)

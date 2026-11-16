@@ -7,8 +7,26 @@ import shutil
 import subprocess
 import tempfile
 import time
+import socket
+import ssl
+from urllib.error import HTTPError, URLError
 
 from .worker import cloud_configuration, fetch, poll, run_agent
+
+
+def safe_error(error):
+    if isinstance(error, HTTPError):
+        return "HTTP " + str(error.code) + " (check Grafana token and permissions)"
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return "TLS certificate verification failed (Python could not verify the certificate chain)"
+    if isinstance(reason, socket.gaierror):
+        return "DNS lookup failed (host name could not be resolved)"
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return "Connection timed out"
+    if isinstance(reason, ConnectionRefusedError):
+        return "Connection refused"
+    return type(error).__name__ + " / " + type(reason).__name__
 
 
 def find_codex():
@@ -48,7 +66,24 @@ def main():
     parser.add_argument("--loki-uid")
     parser.add_argument("--check", action="store_true", help="Verify live API access and a real Codex response, then exit")
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--diagnose", action="store_true", help="Check public Grafana HTTPS connectivity without a token or model call")
     args = parser.parse_args()
+    if args.diagnose:
+        from urllib.parse import urlsplit
+        target = urlsplit(args.grafana_url)
+        if (target.scheme != "https" or not target.hostname or target.username
+                or target.password or target.query or target.fragment):
+            raise ValueError("Use an HTTPS base URL without credentials")
+        try:
+            fetch(args.grafana_url.rstrip("/") + "/api/health")
+        except HTTPError as error:
+            print("HTTPS connection verified; public health endpoint returned HTTP " + str(error.code))
+        else:
+            print("Grafana HTTPS and public health endpoint verified.")
+        paths = ssl.get_default_verify_paths()
+        print("Python default CA file exists:", bool(paths.cafile))
+        print("Python default CA directory exists:", bool(paths.capath))
+        return
     repo = Path(__file__).resolve().parents[1]
     if not (repo / ".git").exists():
         raise ValueError("Run this from a Git checkout of the project")
@@ -105,4 +140,4 @@ if __name__ == "__main__":
         print("\nResponder stopped.")
     except Exception as error:
         # Exception text may contain URLs or request details; do not print credentials.
-        raise SystemExit("Startup/poll failed: " + type(error).__name__ + ". Check API permissions, CLI login and network access.")
+        raise SystemExit("Startup/poll failed: " + safe_error(error))

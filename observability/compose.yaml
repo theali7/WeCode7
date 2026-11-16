@@ -69,7 +69,6 @@ services:
 networks:
   default:
     name: "${TELEMETRY_NETWORK:-wecode-telemetry}"
-    internal: true
 volumes:
   prometheus_data:
   loki_data:

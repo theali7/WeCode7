@@ -16,9 +16,9 @@ exporters:
     translation_strategy: UnderscoreEscapingWithoutSuffixes
     resource_constant_labels:
       included: [service.name, deployment.environment.name, service.version]
-  otlphttp/tempo:
+  otlp_http/tempo:
     endpoint: http://tempo:4318
-  otlphttp/loki:
+  otlp_http/loki:
     endpoint: http://loki:3100/otlp
 service:
   pipelines:
@@ -29,8 +29,8 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/tempo]
+      exporters: [otlp_http/tempo]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/loki]
+      exporters: [otlp_http/loki]

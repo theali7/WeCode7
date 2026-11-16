@@ -85,11 +85,39 @@ metrics:write, logs:write and traces:write. Credentials are not in this reposito
 
 The default notification policy currently routes to an empty contact point.
 State evaluation and history work, but external notification delivery is not
-configured. The current worker in on_call/worker.py reads local Prometheus/Loki,
-not authenticated Grafana Cloud APIs. A real cloud responder still needs a
-read-only integration and an authenticated AI runtime; neither was fabricated.
+configured. The worker in on_call/worker.py now supports authenticated Grafana Cloud polling.
+This adapter has passed local fixture tests, but has not been verified against the
+live Cloud APIs. A real cloud responder still needs read-only credentials and an
+authenticated AI runtime; neither is provisioned by this change.
 The worker's deterministic test subprocess is not a real AI invocation.
 
 The dev/prod services were initially provisioned from the same image manually.
 The prepared CI promotion workflows still require private Render deployment
 credentials in GitHub environments and an actual end-to-end promotion test.
+
+## Cloud worker configuration (not yet live-verified)
+
+Set these privately in the worker environment; never commit their values:
+
+- ONCALL_GRAFANA_URL: the HTTPS Grafana stack URL.
+- ONCALL_GRAFANA_TOKEN: a Grafana service-account token with read access to alerts.
+- PROMETHEUS_URL: HTTPS Prometheus query base URL.
+- ONCALL_METRICS_USER / ONCALL_METRICS_TOKEN: metrics instance ID and read token.
+- LOKI_URL: HTTPS Loki base URL.
+- ONCALL_LOGS_USER / ONCALL_LOGS_TOKEN: logs instance ID and read token.
+
+The existing write-only OTLP token cannot read telemetry. Do not broaden it.
+Cloud mode polls /api/alertmanager/grafana/api/v2/alerts, processes active recognized
+WeCode alerts and uses startsAt in persistent incident deduplication. Suppressed
+alerts are skipped. It uses the cloud _total metric name and queries request logs
+with version as a structured-metadata filter. HTTP redirects are rejected and
+authenticated requests require HTTPS. ONCALL_ variables are removed from the
+agent subprocess environment.
+
+Reference: https://github.com/grafana/grafana/blob/main/pkg/services/ngalert/api/tooling/definitions/alertmanager.go
+
+Local validation: seven on-call tests passed, covering Cloud payload normalization,
+separate credentials, persistent deduplication, redirect refusal, HTTPS enforcement,
+subprocess timeout and retry behavior. These tests do not establish live API
+authorization or a real AI investigation. Run from the repository root:
+python3 -m unittest discover -s tests -p test_on_call.py -v

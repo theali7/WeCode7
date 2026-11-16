@@ -64,6 +64,9 @@ jobs:
       - name: Validate manifest and deploy the same image without rebuilding
         env:
           RUN_ID: ${{ steps.verify.outputs.run_id }}
+          WECODE_DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET || 'render' }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -77,6 +80,6 @@ jobs:
           if str(release["run_id"]) != os.environ["RUN_ID"]:
               raise SystemExit("Release manifest run ID mismatch")
           validate(release["image"], release["version"], "production")
-          subprocess.run(["python3", "deploy/remote.py", "--environment", "production",
+          subprocess.run(["python3", "-m", "deploy.release", "--environment", "production",
                           "--image", release["image"], "--version", release["version"]], check=True)
           PY

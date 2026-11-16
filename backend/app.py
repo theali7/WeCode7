@@ -155,6 +155,12 @@ def health():
     return Response("ok\n", media_type="text/plain")
 
 
+@app.get("/api/release")
+def release_identity():
+    return {"version": os.environ.get("APP_VERSION") or os.environ.get("BUILD_VERSION", "unknown"),
+            "environment": os.environ.get("APP_ENV", "local")}
+
+
 @app.get("/api/health")
 def ready():
     try:

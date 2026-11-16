@@ -10,6 +10,8 @@ COPY scripts/prepare_runtimes.py scripts/runtime-manifest.json /app/scripts/
 RUN python /app/scripts/prepare_runtimes.py /app/static/runtimes
 COPY scripts/prepare_frontend.py /app/scripts/prepare_frontend.py
 RUN python /app/scripts/prepare_frontend.py /app/static
+ARG APP_VERSION=unknown
+ENV BUILD_VERSION=${APP_VERSION}
 USER wecode
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3)" || exit 1

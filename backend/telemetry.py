@@ -48,7 +48,7 @@ class Telemetry:
         resource = Resource.create({
             "service.name": os.environ.get("OTEL_SERVICE_NAME", "wecode-api"),
             "deployment.environment.name": os.environ.get("APP_ENV", "local"),
-            "service.version": os.environ.get("APP_VERSION", "unknown"),
+            "service.version": os.environ.get("APP_VERSION") or os.environ.get("BUILD_VERSION", "unknown"),
         })
         traces = TracerProvider(resource=resource)
         traces.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint + "/v1/traces", timeout=3)))

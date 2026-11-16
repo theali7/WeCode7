@@ -59,16 +59,20 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64
+          build-args: APP_VERSION=${{ needs.gate.outputs.sha }}
           tags: ghcr.io/theali7/wecode7:${{ needs.gate.outputs.sha }}
       - name: Deploy the published digest to development
         env:
+          WECODE_DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET || 'render' }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           IMAGE: ghcr.io/theali7/wecode7@${{ steps.build.outputs.digest }}
           VERSION: ${{ needs.gate.outputs.sha }}
-        run: python3 deploy/remote.py --environment development --image "$IMAGE" --version "$VERSION"
+        run: python3 -m deploy.release --environment development --image "$IMAGE" --version "$VERSION"
       - name: Record the healthy development release
         env:
           IMAGE: ghcr.io/theali7/wecode7@${{ steps.build.outputs.digest }}

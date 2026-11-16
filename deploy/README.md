@@ -1,67 +1,98 @@
-# Development and production deployment foundation
+# Development and production
 
-This file introduces isolated Compose deployments. It does not provision servers,
-configure HTTPS, activate OpenTelemetry, or implement automatic deployment.
+## Current status
 
-## Configuration
+The isolated Compose pattern has passed GitHub Actions tests for separate networks,
+database volumes, credentials and tokens. These were disposable test environments,
+not persistent public deployments.
 
-Keep deployment environment files outside the repository. Create separate files
-for development and production containing the following keys:
+The deployment workflows in this branch require a configured SSH host. They do not
+provision servers or modify the existing Render deployment. OpenTelemetry resource
+metadata is present in Compose, but telemetry export is a later step.
+
+## Server requirements
+
+Use a Linux amd64 server with Docker Engine, Docker Compose v2, Python 3 and an SSH
+account allowed to run Docker. Create separate GitHub environments named
+development and production. Set these environment secrets for each:
+
+| Secret | Value |
+| --- | --- |
+| DEPLOY_HOST | Server hostname or IPv4 address |
+| DEPLOY_USER | Unix SSH account |
+| DEPLOY_SSH_KEY | Dedicated private SSH key |
+| DEPLOY_KNOWN_HOSTS | Verified SSH known-hosts entry for that host |
+
+The server needs registry read access to ghcr.io/theali7/wecode7. If the package is
+private, configure docker login on the server with a separate read-only registry
+credential. The Actions GITHUB_TOKEN publishes the image from the development job.
+
+Create /srv/wecode/config and /srv/wecode/deployments owned by the SSH account.
+Store files development.env and production.env under /srv/wecode/config, with mode
+0600 and independently generated database and authentication secrets:
 
 ```dotenv
-APP_ENV=development
-APP_PORT=8081
-APP_VERSION=COMMIT_SHA
-WECODE_IMAGE=ghcr.io/theali7/wecode7@sha256:IMAGE_DIGEST
-PUBLIC_ORIGIN=https://dev.example.com
-POSTGRES_PASSWORD=REPLACE_WITH_UNIQUE_URL_SAFE_RANDOM_PASSWORD
-AUTH_SECRET=REPLACE_WITH_UNIQUE_RANDOM_SECRET_AT_LEAST_32_CHARACTERS
+PUBLIC_ORIGIN=https://YOUR_ENVIRONMENT_DOMAIN
+POSTGRES_PASSWORD=UNIQUE_URL_SAFE_RANDOM_PASSWORD
+AUTH_SECRET=UNIQUE_RANDOM_SECRET_AT_LEAST_32_CHARACTERS
 ```
 
-For production use APP_ENV=production, APP_PORT=8082, its own HTTPS origin, and
-independently generated database password and authentication secret.
-Use URL-safe database passwords because DATABASE_URL embeds the password.
-Replace all placeholders before starting containers.
+Use URL-safe passwords: DATABASE_URL embeds the password. Each origin must be a
+real HTTPS origin without a path. Configure HTTPS reverse proxies to localhost
+port 8081 for development and 8082 for production. Database ports stay private.
+Existing accounts and databases are not copied between these environments.
 
-## Validate and start
+## Automatic development deployment
+
+After merging the workflows into main, pushes trigger the existing backend,
+browser and isolation checks. The development workflow reacts when checks finish
+and proceeds only when all three checks passed for the current main commit.
+
+It builds and publishes one linux/amd64 image, deploys its immutable digest via SSH,
+and verifies container health and /api/health before recording the release.
+A development-release artifact records image digest, application commit SHA and
+workflow run ID. GitHub runs where the gate did not deploy have no release artifact.
+
+## Manual production promotion
+
+Open Actions, choose Promote development to production, select main, then enter
+the run ID of the latest successful Deploy development run with a release artifact.
+The workflow verifies that run and deploys exactly its digest to production.
+It does not build another image. Production and development releases are serialized
+with the same workflow concurrency group.
+
+The workflows must exist on main before workflow_run and workflow_dispatch can
+be used. A draft pull request does not activate production deployment.
+An optional production environment reviewer can add another release approval.
+
+## Local configuration validation and disposable CI
+
+deploy/compose.yaml can also be invoked manually using separate environment files,
+explicit project names wecode-dev and wecode-prod, and WECODE_IMAGE, APP_VERSION,
+APP_ENV and APP_PORT values in addition to the secrets above:
 
 ```sh
 docker compose --env-file /secure/wecode-dev.env -p wecode-dev -f deploy/compose.yaml config --quiet
 docker compose --env-file /secure/wecode-dev.env -p wecode-dev -f deploy/compose.yaml up -d --wait
-docker compose --env-file /secure/wecode-prod.env -p wecode-prod -f deploy/compose.yaml config --quiet
-docker compose --env-file /secure/wecode-prod.env -p wecode-prod -f deploy/compose.yaml up -d --wait
 ```
 
-The project names create separate networks and PostgreSQL volumes. Never reuse
-the same project name for both environments. No database port is published.
-The web ports bind to localhost; configure an authenticated operator workflow
-and an HTTPS reverse proxy before exposing an environment externally.
+Use development/8081 or production/8082 for APP_ENV/APP_PORT. Use an immutable
+registry digest for WECODE_IMAGE and the full application commit for APP_VERSION.
+Do not reuse Compose project names across environments.
 
-## Manual promotion
+The isolation workflow builds one disposable image, starts two isolated projects,
+checks health, networks, volumes and account/token boundaries in both directions,
+and removes only its disposable projects afterward. deploy/verify_isolation.py
+refuses to run without WECODE_DISPOSABLE_ISOLATION=yes.
 
-Build and publish an image once, deploy it to development, and test it there.
-Copy its exact WECODE_IMAGE digest and APP_VERSION to the production environment
-file, then run the production up command above. Do not copy database contents
-or credentials between environments. A later CI/CD workflow must automate this
-same promotion after a manual trigger.
+## Limits and recovery
 
-## Verification and current limits
+A failing deployment fails the workflow and does not create a successful release
+manifest. It can leave a failed new container on the server: automatic rollback is
+not implemented. The previous successful image/version remains in
+/srv/wecode/deployments/ENVIRONMENT/release.json. Restore it manually if needed.
+Database migrations run at application startup; image rollback cannot reverse
+schema changes. Back up each database before releases with schema changes.
 
-Check each environment's /api/health through its own origin. Register a
-disposable development account and confirm it cannot authenticate in production.
-Never use real account credentials in this check.
-
-The OTEL variables only supply resource metadata for subsequent instrumentation:
-they do not collect or export telemetry yet. Existing Render configuration and
-the local root compose.yaml are unchanged. Server provisioning, registry
-publishing, manual GitHub Actions promotion, telemetry, dashboards, alerts, and
-an AI responder are still pending. Existing tests must pass before deployment.
-
-## Automated isolation verification
-
-The Development and production isolation workflow builds one image and starts two
-disposable Compose projects on GitHub Actions. It checks database health, separate
-networks and volumes, successful authentication in each account's own environment,
-and rejection of cross-environment credentials and tokens in both directions.
-It removes its disposable volumes afterward. This verifies the deployment pattern;
-it does not provision persistent public development or production servers.
+Persistent hosting, server secrets and HTTPS must be configured before live release
+verification. Dashboards, alerts and the AI responder remain separate work.

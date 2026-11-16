@@ -14,6 +14,37 @@ def alert():
             "annotations": {"summary": "Database not ready"}}
 
 class OnCallTests(unittest.TestCase):
+    def test_cloud_alert_dispatch_and_credentials_are_separate(self):
+        from on_call.worker import fetch
+        with self.assertRaises(ValueError):
+            fetch("http://example.invalid", "Bearer secret")
+        cloud = {"alerts_url": "https://grafana/api/alertmanager/grafana/api/v2/alerts",
+                 "alerts": "Bearer alert-token", "metrics": "Basic metric-token", "logs": "Basic log-token"}
+        source = alert()
+        source["labels"]["alertname"] = "WeCodeAuthenticationRejections"
+        item = {**source, "startsAt": source["activeAt"], "status": {"state": "active"}}
+        seen = []
+        def response(url, authorization=None):
+            seen.append((url, authorization))
+            if url == cloud["alerts_url"]:
+                return [item, {**item, "status": {"state": "suppressed"}}]
+            return {"status": "success", "data": {"result": []}}
+        with tempfile.TemporaryDirectory() as root, patch("on_call.worker.fetch", side_effect=response):
+            with patch("on_call.worker.run_agent") as run:
+                self.assertEqual(poll("https://metrics", "https://logs", root, root, ["fixture"], cloud=cloud)["handled"], 1)
+                self.assertEqual(poll("https://metrics", "https://logs", root, root, ["fixture"], cloud=cloud)["handled"], 0)
+                run.assert_called_once()
+                self.assertNotIn("metric-token", run.call_args.args[1])
+        self.assertEqual(seen[0][1], cloud["alerts"])
+        self.assertEqual(seen[1][1], cloud["metrics"])
+        self.assertIn("wecode_http_requests_total", seen[1][0])
+        self.assertEqual(seen[2][1], cloud["logs"])
+
+    def test_redirects_are_rejected(self):
+        from on_call.worker import NoRedirect
+        with self.assertRaises(ValueError):
+            NoRedirect().redirect_request(None, None, 302, "", {}, "https://other.invalid")
+
     def test_only_recognized_firing_alerts_are_dispatched(self):
         self.assertTrue(eligible(alert()))
         for key, value in (("state", "pending"),):

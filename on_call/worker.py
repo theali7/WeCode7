@@ -9,13 +9,20 @@ from pathlib import Path
 import signal
 import subprocess
 import time
-from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.parse import urlencode, urlsplit
+from urllib.request import Request, HTTPRedirectHandler, build_opener
 
-ALERTS = {"WeCodeProgressWriteFailures", "WeCodeReadinessFailures"}
+ALERTS = {"WeCodeProgressWriteFailures", "WeCodeReadinessFailures", "WeCodeAuthenticationRejections"}
 
-def fetch(url):
-    with urlopen(url, timeout=10) as response:
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("Telemetry redirects are disabled")
+
+def fetch(url, authorization=None):
+    if authorization and urlsplit(url).scheme != "https":
+        raise ValueError("Authenticated telemetry requires HTTPS")
+    request = Request(url, headers={"Authorization": authorization} if authorization else {})
+    with build_opener(NoRedirect()).open(request, timeout=10) as response:
         raw = response.read(1_048_577)
     if len(raw) > 1_048_576:
         raise ValueError("Telemetry response too large")
@@ -32,16 +39,16 @@ def eligible(alert):
             and labels.get("service_name") == "wecode-api"
             and labels.get("deployment_environment_name") in {"development", "production"})
 
-def context(alert, prometheus, loki):
+def context(alert, prometheus, loki, cloud=None):
     labels = alert["labels"]
     selector = '{service_name="wecode-api",deployment_environment_name=' + json.dumps(labels["deployment_environment_name"]) + ',service_version=' + json.dumps(labels.get("service_version", "")) + '}'
     snapshot = {}
     for name, url in {
-        "metrics": prometheus + "/api/v1/query?" + urlencode({"query": "sum by (http_response_status_code) (rate(wecode_http_requests" + selector + "[5m]))"}),
+        "metrics": prometheus + "/api/v1/query?" + urlencode({"query": "sum by (http_response_status_code) (rate(" + ("wecode_http_requests_total" if cloud else "wecode_http_requests") + selector + "[5m]))"}),
         "logs": loki + "/loki/api/v1/query_range?" + urlencode({"query": '{service_name="wecode-api",deployment_environment_name=' + json.dumps(labels["deployment_environment_name"]) + '} | service_version=' + json.dumps(labels.get("service_version", "")), "limit": 20}),
     }.items():
         try:
-            snapshot[name] = fetch(url)
+            snapshot[name] = fetch(url, cloud[name]) if cloud else fetch(url)
         except Exception as error:
             snapshot[name] = {"unavailable": type(error).__name__}
     return snapshot
@@ -78,7 +85,7 @@ def run_agent(command, prompt, repo, report, errors, timeout):
     if not report.read_text().strip():
         raise RuntimeError("Agent returned an empty report")
 
-def poll(prometheus, loki, repo, state_dir, command, timeout=300, retry_seconds=300):
+def poll(prometheus, loki, repo, state_dir, command, timeout=300, retry_seconds=300, cloud=None):
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     state_dir.chmod(0o700)
@@ -89,7 +96,17 @@ def poll(prometheus, loki, repo, state_dir, command, timeout=300, retry_seconds=
             return {"busy": True, "handled": 0}
         path = state_dir / "state.json"
         state = json.loads(path.read_text()) if path.exists() else {}
-        response = fetch(prometheus.rstrip("/") + "/api/v1/alerts")
+        if cloud:
+            items = fetch(cloud["alerts_url"], cloud["alerts"])
+            if not isinstance(items, list):
+                raise ValueError("Grafana alerts response must be a list")
+            response = {"status": "success", "data": {"alerts": [
+                {**item, "state": "firing", "activeAt": item["startsAt"]}
+                for item in items if item.get("status", {}).get("state") == "active"
+                and item.get("startsAt")
+            ]}}
+        else:
+            response = fetch(prometheus.rstrip("/") + "/api/v1/alerts")
         if response.get("status") != "success":
             raise ValueError("Prometheus alert query did not succeed")
         handled = 0
@@ -102,7 +119,7 @@ def poll(prometheus, loki, repo, state_dir, command, timeout=300, retry_seconds=
                 continue
             incident = state_dir / key
             incident.mkdir(exist_ok=True, mode=0o700)
-            snapshot = context(alert, prometheus.rstrip("/"), loki.rstrip("/"))
+            snapshot = context(alert, prometheus.rstrip("/"), loki.rstrip("/"), cloud)
             (incident / "evidence.json").write_text(json.dumps({"alert": alert, "snapshot": snapshot}, indent=2))
             try:
                 run_agent(command, prompt_for(alert, snapshot), str(repo),
@@ -127,10 +144,29 @@ def main():
         raise SystemExit("ONCALL_AGENT_COMMAND must be a JSON argv array")
     repo = Path(os.environ.get("ONCALL_REPOSITORY", str(Path(__file__).resolve().parents[1]))).resolve()
     state = Path(os.environ.get("ONCALL_STATE_DIRECTORY", str(Path.home() / ".local/state/wecode-oncall")))
+    cloud = None
+    if os.environ.get("ONCALL_GRAFANA_URL"):
+        import base64
+        def basic(prefix):
+            user, token = os.environ[prefix + "_USER"], os.environ[prefix + "_TOKEN"]
+            if not user or not token:
+                raise ValueError("Cloud credentials cannot be empty")
+            return "Basic " + base64.b64encode((user + ":" + token).encode()).decode()
+        cloud = {
+            "alerts_url": os.environ["ONCALL_GRAFANA_URL"].rstrip("/") + "/api/alertmanager/grafana/api/v2/alerts",
+            "alerts": "Bearer " + os.environ["ONCALL_GRAFANA_TOKEN"],
+            "metrics": basic("ONCALL_METRICS"),
+            "logs": basic("ONCALL_LOGS"),
+        }
+        if not os.environ["ONCALL_GRAFANA_TOKEN"]:
+            raise ValueError("Grafana token cannot be empty")
+        for name in ("PROMETHEUS_URL", "LOKI_URL"):
+            if urlsplit(os.environ[name]).scheme != "https":
+                raise ValueError("Cloud telemetry requires explicit HTTPS endpoints")
     while True:
         try:
             result = poll(os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090"),
-                          os.environ.get("LOKI_URL", "http://127.0.0.1:3100"), repo, state, command)
+                          os.environ.get("LOKI_URL", "http://127.0.0.1:3100"), repo, state, command, cloud=cloud)
             print(json.dumps(result), flush=True)
             if args.once:
                 raise SystemExit(1 if result.get("failed") else 0)

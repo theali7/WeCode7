@@ -43,3 +43,10 @@ The owner supplied a Render dashboard screenshot showing this same commit Live w
 - Render's free database is temporary; see RENDER_SETUP.md for expiry and backup guidance.
 
 Do not treat this repository as complete fulfillment of every assignment requirement until outstanding issues are resolved.
+
+## Assignment 2 Part II: DevOps and observability
+
+See [implementation and demonstration checklist](ASSIGNMENT2_PART2.md). This branch
+contains deployment, telemetry, dashboard, alert and on-call worker code. Persistent
+hosting and an authenticated real AI responder still require configuration; a
+successful CI run is not proof of a public production deployment.

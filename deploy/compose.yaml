@@ -1,0 +1,36 @@
+# Use an explicit project name: wecode-dev or wecode-prod.
+services:
+  web:
+    image: ${WECODE_IMAGE:?Set WECODE_IMAGE to a tested registry image digest}
+    ports:
+      - "127.0.0.1:${APP_PORT:?Set a distinct APP_PORT}:8080"
+    environment:
+      DATABASE_URL: "postgresql://wecode:${POSTGRES_PASSWORD:?Set a unique database password}@db:5432/wecode"
+      AUTH_SECRET: "${AUTH_SECRET:?Set a unique authentication secret}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?Set the HTTPS origin for this environment}"
+      APP_ENV: "${APP_ENV:?Set APP_ENV}"
+      APP_VERSION: "${APP_VERSION:?Set APP_VERSION}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
+      OTEL_EXPORTER_OTLP_HEADERS: "${OTEL_EXPORTER_OTLP_HEADERS:-}"
+      OTEL_SERVICE_NAME: wecode-api
+      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=${APP_ENV:?Set APP_ENV},service.version=${APP_VERSION:?Set APP_VERSION}"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: wecode
+      POSTGRES_DB: wecode
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set a unique database password}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wecode -d wecode"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+volumes:
+  postgres_data:

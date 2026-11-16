@@ -1,0 +1,26 @@
+groups:
+  - name: wecode
+    interval: 5s
+    rules:
+      - alert: WeCodeProgressWriteFailures
+        expr: sum by (service_name, deployment_environment_name, service_version) (increase(wecode_progress_writes{service_name="wecode-api",outcome="error"}[5m])) >= 3
+        for: 1m
+        labels:
+          severity: critical
+          owner: wecode-maintainer
+        annotations:
+          summary: Repeated failures while saving learning progress
+          description: At least three observed progress-write failures within five minutes; condition persisted for one minute.
+          dashboard_url: 'http://localhost:3000/d/wecode-overview?var-environment={{ $labels.deployment_environment_name }}&var-version={{ $labels.service_version }}'
+          runbook: Check database availability, application logs, recent deployment and progress-write traces.
+      - alert: WeCodeReadinessFailures
+        expr: sum by (service_name, deployment_environment_name, service_version) (increase(wecode_http_requests{service_name="wecode-api",http_route="/api/health",http_response_status_code="503"}[5m])) >= 3
+        for: 1m
+        labels:
+          severity: critical
+          owner: wecode-maintainer
+        annotations:
+          summary: Application database readiness is repeatedly failing
+          description: At least three observed HTTP 503 readiness responses within five minutes; condition persisted for one minute.
+          dashboard_url: 'http://localhost:3000/d/wecode-overview?var-environment={{ $labels.deployment_environment_name }}&var-version={{ $labels.service_version }}'
+          runbook: Check PostgreSQL availability and startup migrations before considering application code changes.

@@ -1,0 +1,69 @@
+name: Development and production isolation
+on:
+  pull_request:
+  push:
+    branches: [main, assignment2-observability]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Build the same image for both disposable environments
+        run: docker build -t wecode-isolation:ci .
+      - name: Generate separate disposable configuration files
+        run: |
+          python - <<'PY'
+          import os, pathlib, secrets
+          for name, port in (("development", 8081), ("production", 8082)):
+              path = pathlib.Path(os.environ["RUNNER_TEMP"]) / (name + ".env")
+              with path.open("x") as stream:
+                  path.chmod(0o600)
+                  stream.write(f"APP_ENV={name}\nAPP_PORT={port}\n")
+                  stream.write("APP_VERSION=" + os.environ["GITHUB_SHA"] + "\n")
+                  stream.write("WECODE_IMAGE=wecode-isolation:ci\n")
+                  stream.write(f"PUBLIC_ORIGIN=https://{name}.example.test\n")
+                  stream.write("POSTGRES_PASSWORD=" + secrets.token_urlsafe(32) + "\n")
+                  stream.write("AUTH_SECRET=" + secrets.token_urlsafe(48) + "\n")
+          PY
+      - name: Start development
+        run: docker compose --env-file "$RUNNER_TEMP/development.env" -p wecode-isolation-dev -f deploy/compose.yaml up -d --wait --wait-timeout 120
+      - name: Start production
+        run: docker compose --env-file "$RUNNER_TEMP/production.env" -p wecode-isolation-prod -f deploy/compose.yaml up -d --wait --wait-timeout 120
+      - name: Verify separate networks and volumes
+        run: |
+          python - <<'PY'
+          import json, subprocess
+          def inspect(project):
+              ids = subprocess.check_output(["docker", "ps", "-q", "--filter", "label=com.docker.compose.project=" + project], text=True).split()
+              assert len(ids) == 2, (project, "expected web and database")
+              containers = json.loads(subprocess.check_output(["docker", "inspect", *ids]))
+              networks = {key for item in containers for key in item["NetworkSettings"]["Networks"]}
+              volumes = {mount["Name"] for item in containers for mount in item["Mounts"] if mount["Type"] == "volume"}
+              assert networks and volumes
+              return networks, volumes
+          dev, prod = inspect("wecode-isolation-dev"), inspect("wecode-isolation-prod")
+          assert dev[0].isdisjoint(prod[0]), "shared networks"
+          assert dev[1].isdisjoint(prod[1]), "shared database volumes"
+          print("PASS: separate networks and database volumes")
+          PY
+      - name: Verify account and token isolation
+        env:
+          WECODE_DISPOSABLE_ISOLATION: 'yes'
+        run: python deploy/verify_isolation.py
+      - name: Remove disposable environments
+        if: always()
+        run: |
+          for pair in "development dev" "production prod"; do
+            set -- $pair
+            if [ -f "$RUNNER_TEMP/$1.env" ]; then
+              docker compose --env-file "$RUNNER_TEMP/$1.env" -p "wecode-isolation-$2" -f deploy/compose.yaml down -v
+              rm -f "$RUNNER_TEMP/$1.env"
+            fi
+          done

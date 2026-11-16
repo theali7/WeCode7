@@ -19,6 +19,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from . import db
+from .telemetry import Telemetry, TelemetryMiddleware
 from .security import access_token, verify_access, password_hash, password_matches, token_hash
 
 TABLES = {
@@ -112,8 +113,14 @@ def identity(request, connection):
 async def lifespan(app):
     secret()
     public_origin()
-    db.migrate_with_retry()
-    yield
+    app.state.telemetry = Telemetry.from_environment()
+    try:
+        db.migrate_with_retry()
+        yield
+    finally:
+        if app.state.telemetry is not None:
+            app.state.telemetry.close()
+        app.state.telemetry = None
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -146,6 +153,12 @@ async def http_error(request, exc):
 @app.get("/healthz")
 def health():
     return Response("ok\n", media_type="text/plain")
+
+
+@app.get("/api/release")
+def release_identity():
+    return {"version": os.environ.get("APP_VERSION") or os.environ.get("BUILD_VERSION", "unknown"),
+            "environment": os.environ.get("APP_ENV", "local")}
 
 
 @app.get("/api/health")
@@ -367,3 +380,7 @@ if STATIC.exists():
     @app.get("/")
     def index():
         return FileResponse(STATIC / "index.html")
+
+
+# Register last so size/origin rejections are observed as well.
+app.add_middleware(TelemetryMiddleware)

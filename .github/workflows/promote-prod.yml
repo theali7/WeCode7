@@ -1,0 +1,85 @@
+name: Promote development to production
+on:
+  workflow_dispatch:
+    inputs:
+      development_run_id:
+        description: Run ID of the latest successful Deploy development workflow
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: wecode-release
+  cancel-in-progress: false
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the selected development run
+        id: verify
+        uses: actions/github-script@v7
+        env:
+          RUN_ID: ${{ inputs.development_run_id }}
+        with:
+          script: |
+            if (!/^[0-9]+$/.test(process.env.RUN_ID)) throw new Error('Invalid run ID');
+            const {data: run} = await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: process.env.RUN_ID
+            });
+            if (run.path !== '.github/workflows/deploy-dev.yml' ||
+                run.head_branch !== 'main' || run.conclusion !== 'success' ||
+                run.event !== 'workflow_run' || run.repository.full_name !== context.repo.owner + '/' + context.repo.repo) {
+              throw new Error('Select a successful main development deployment');
+            }
+            const {data: latest} = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'deploy-dev.yml', branch: 'main', status: 'success', per_page: 100
+            });
+            let latestDeployment;
+            for (const candidate of latest.workflow_runs) {
+              const {data: artifacts} = await github.rest.actions.listWorkflowRunArtifacts({
+                ...context.repo, run_id: candidate.id
+              });
+              if (artifacts.artifacts.some(a => a.name === 'development-release' && !a.expired)) {
+                latestDeployment = candidate;
+                break;
+              }
+            }
+            if (String(latestDeployment?.id) !== process.env.RUN_ID) {
+              throw new Error('Select the latest successful development deployment with a release manifest');
+            }
+            // workflow_run head_sha refers to the workflow default-branch revision;
+            // the deployed application revision is recorded in the release artifact.
+            core.setOutput('run_id', String(run.id));
+      - name: Download the development release manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ steps.verify.outputs.run_id }}
+        run: gh run download "$RUN_ID" --name development-release --dir release
+      - name: Validate manifest and deploy the same image without rebuilding
+        env:
+          RUN_ID: ${{ steps.verify.outputs.run_id }}
+          WECODE_DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET || 'render' }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from deploy.remote import validate
+          with open("release/release.json") as stream:
+              release = json.load(stream)
+          if str(release["run_id"]) != os.environ["RUN_ID"]:
+              raise SystemExit("Release manifest run ID mismatch")
+          validate(release["image"], release["version"], "production")
+          subprocess.run(["python3", "-m", "deploy.release", "--environment", "production",
+                          "--image", release["image"], "--version", release["version"]], check=True)
+          PY

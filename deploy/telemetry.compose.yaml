@@ -1,0 +1,10 @@
+# Same-host monitoring connection. Database remains on the private app network.
+services:
+  web:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+    networks: [default, telemetry]
+networks:
+  telemetry:
+    external: true
+    name: "${TELEMETRY_NETWORK:-wecode-telemetry}"

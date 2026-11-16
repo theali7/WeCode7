@@ -6,7 +6,19 @@ Only Free plans are authorized. The Render deployment adapter checks the existin
 service plan and refuses any value other than free; it never creates services or
 changes billing. This does not replace checking each provider's account/usage
 limits. No paid plans, trials requiring payment, or extra paid resources should be
-enabled. No new live environment has been provisioned by these files.
+enabled.
+
+Live setup verified on 2026-11-16: wecode7-dev and wecode7-prod are running as
+Free Render image services with independent Free Neon databases. Both health
+endpoints returned status=ok/database=postgresql and their release endpoints
+reported version 831cc9cc2137c0a5edac5a30dfb48a01fecfa77e with their respective
+development/production environment. This initial provisioning was performed in
+the provider dashboards; it is not evidence of a completed CI promotion.
+
+Cloud dashboard, logs, traces and an authentication alert lifecycle were verified.
+See ../observability/cloud/README.md for the live links and reproducible queries.
+Render CI credentials, real AI invocation and a full manual CI promotion remain
+unfinished. No merge to main is implied.
 
 The existing wecode-assignment2 Render service and its database stay separate from
 new services wecode7-dev and wecode7-prod. The adapter refuses other service names.
@@ -59,8 +71,8 @@ base endpoint and authentication headers for its Free stack. On both Render
 services set OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_HEADERS privately.
 Use HTTPS. APP_ENV and the baked version identify the environment/release.
 
-Import/adapt the provisioned dashboard with the Cloud Prometheus, Loki and Tempo
-datasources. Cloud metric translation can add _total counter and _seconds histogram
+Import observability/cloud/wecode.json with the Cloud Prometheus and Loki
+datasources; use the Traces Drilldown link for Tempo. Cloud metric translation can add _total counter and _seconds histogram
 suffixes; inspect actual ingested names and resource labels before adapting queries.
 The tested local dashboard uses a Collector configured without these suffixes.
 Do not claim Cloud dashboard or alert verification until real requests are visible.

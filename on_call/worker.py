@@ -69,7 +69,9 @@ def run_agent(command, prompt, repo, report, errors, timeout):
     # Separate process group lets a timed-out session and its subprocesses be stopped.
     with report.open("w") as output, errors.open("w") as stderr:
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=output,
-                                   stderr=stderr, text=True, cwd=repo, start_new_session=True)
+                                   stderr=stderr, text=True, cwd=repo, start_new_session=True,
+                                   env={key: value for key, value in os.environ.items()
+                                        if not key.startswith("ONCALL_")})
         try:
             process.communicate(prompt, timeout=timeout)
         except subprocess.TimeoutExpired:

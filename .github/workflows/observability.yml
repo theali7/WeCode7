@@ -35,6 +35,8 @@ jobs:
           PY
       - name: Validate Collector configuration
         run: docker compose -f observability/compose.yaml run --rm --no-deps collector validate --config=/etc/otelcol/config.yaml
+      - name: Test production alert rules
+        run: docker run --rm -v "$PWD/observability:/rules:ro" -w /rules --entrypoint /bin/promtool prom/prometheus:v3.16.0 test rules alerts.test.yaml
       - name: Start separate observability project
         run: docker compose -f observability/compose.yaml up -d
       - name: Build one application image
@@ -47,6 +49,10 @@ jobs:
         env:
           WECODE_DISPOSABLE_MONITORING: 'yes'
         run: python3 observability/verify_stack.py
+      - name: Verify a real alert and worker dispatch
+        env:
+          WECODE_DISPOSABLE_MONITORING: 'yes'
+        run: python3 -m observability.verify_alert
       - name: Collect diagnostic logs
         if: failure()
         run: docker compose -f observability/compose.yaml logs --no-color --tail 200
@@ -54,7 +60,9 @@ jobs:
         if: always()
         with:
           name: monitoring-evidence
-          path: monitoring-evidence.json
+          path: |
+            monitoring-evidence.json
+            oncall-evidence.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Remove disposable projects

@@ -50,7 +50,57 @@ payloads for all three signals, checks metric counts, trace parenting and log
 correlation, and verifies that test credentials and exception text are absent.
 It uses disposable requests and no external telemetry provider or real database.
 
-This stage instruments and exports application telemetry. Persistent storage,
-collector deployment, dashboards, alerting and the AI on-call worker remain to be
-implemented. An endpoint configured without a reachable receiver cannot provide
-stored telemetry.
+The repository includes a separate Collector/Prometheus/Loki/Tempo/Grafana stack.
+It uses Docker volumes and seven-day retention for stored telemetry. This is a
+single-host educational setup, without high availability or off-host backups.
+Persistent hosting, alerting and the AI on-call worker remain pending.
+
+## Start the local observability stack
+
+Set GRAFANA_ADMIN_PASSWORD to a unique password through your shell or an untracked
+environment file, then run:
+
+```sh
+docker compose -f observability/compose.yaml up -d
+```
+
+Start an application environment with both Compose files:
+
+```sh
+docker compose --env-file /secure/wecode-dev.env -p wecode-dev -f deploy/compose.yaml -f deploy/telemetry.compose.yaml up -d --wait
+```
+
+Repeat with the production env file/project name. The override connects only the
+web containers to the shared monitoring network; databases retain separate app
+networks. For SSH deployments, set OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
+in each server env file. The release script detects this endpoint and adds the
+network override automatically. Start the observability project on that server
+before enabling it. Other receiver URLs continue using the base deployment.
+
+Open http://localhost:3000/d/wecode-overview and sign in as admin with your configured
+password. Select the environment and version filters. Tempo is provisioned as a
+datasource in Explore. Dashboard rates need several scrapes and enough requests;
+unrecorded business events can appear as no data instead of a fabricated zero.
+
+Prometheus (:9090), Loki (:3100), Tempo (:3200), the OTLP receiver (:4318), and Grafana
+(:3000) bind only to 127.0.0.1. Use an SSH tunnel for remote access. Backend service
+authentication is disabled on the private monitoring network; do not expose those
+ports publicly. Grafana anonymous login is disabled.
+
+Stop with docker compose -f observability/compose.yaml down to preserve volumes.
+The -v option deletes stored telemetry; use it only for disposable CI data.
+
+## End-to-end evidence
+
+The Observability end-to-end workflow starts this real stack and two disposable
+WeCode environments. It performs registration, login and progress writes, then
+polls Prometheus counters, Loki logs and Tempo trace lookup for both environments.
+It checks the provisioned Grafana dashboard and datasources, fetches metrics
+through Grafana's proxy and validates every dashboard PromQL expression.
+Its artifact records only trace IDs and verification results, never credentials.
+
+Configuration references:
+- https://opentelemetry.io/docs/collector/configuration/
+- https://grafana.com/docs/loki/latest/send-data/otel/
+- https://grafana.com/docs/tempo/latest/configuration/
+

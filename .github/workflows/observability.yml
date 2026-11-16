@@ -1,0 +1,70 @@
+name: Observability end-to-end
+on:
+  pull_request:
+  push:
+    branches: [main, assignment2-observability]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  monitoring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Create disposable configuration
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, secrets
+          password = secrets.token_urlsafe(32)
+          print("::add-mask::" + password)
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write("GRAFANA_ADMIN_PASSWORD=" + password + "\n")
+          for name, port in (("development", 8081), ("production", 8082)):
+              target = pathlib.Path(os.environ["RUNNER_TEMP"]) / (name + ".env")
+              with target.open("x") as output:
+                  target.chmod(0o600)
+                  output.write(f"APP_ENV={name}\nAPP_PORT={port}\nAPP_VERSION=ci-monitoring\n")
+                  output.write("WECODE_IMAGE=wecode-monitoring:ci\n")
+                  output.write(f"PUBLIC_ORIGIN=https://{name}.example.test\n")
+                  output.write("POSTGRES_PASSWORD=" + secrets.token_urlsafe(32) + "\n")
+                  output.write("AUTH_SECRET=" + secrets.token_urlsafe(48) + "\n")
+          PY
+      - name: Validate Collector configuration
+        run: docker compose -f observability/compose.yaml run --rm --no-deps collector validate --config=/etc/otelcol/config.yaml
+      - name: Start separate observability project
+        run: docker compose -f observability/compose.yaml up -d
+      - name: Build one application image
+        run: docker build -t wecode-monitoring:ci .
+      - name: Start both disposable applications with telemetry
+        run: |
+          docker compose --env-file "$RUNNER_TEMP/development.env" -p wecode-monitoring-dev -f deploy/compose.yaml -f deploy/telemetry.compose.yaml up -d --wait --wait-timeout 180
+          docker compose --env-file "$RUNNER_TEMP/production.env" -p wecode-monitoring-prod -f deploy/compose.yaml -f deploy/telemetry.compose.yaml up -d --wait --wait-timeout 180
+      - name: Verify stored signals and dashboard
+        env:
+          WECODE_DISPOSABLE_MONITORING: 'yes'
+        run: python3 observability/verify_stack.py
+      - name: Collect diagnostic logs
+        if: failure()
+        run: docker compose -f observability/compose.yaml logs --no-color --tail 200
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: monitoring-evidence
+          path: monitoring-evidence.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Remove disposable projects
+        if: always()
+        run: |
+          for pair in "development dev" "production prod"; do
+            set -- $pair
+            if [ -f "$RUNNER_TEMP/$1.env" ]; then
+              docker compose --env-file "$RUNNER_TEMP/$1.env" -p "wecode-monitoring-$2" -f deploy/compose.yaml -f deploy/telemetry.compose.yaml down -v
+              rm -f "$RUNNER_TEMP/$1.env"
+            fi
+          done
+          docker compose -f observability/compose.yaml down -v

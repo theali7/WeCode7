@@ -1,7 +1,7 @@
 name: Deploy development
 on:
   workflow_run:
-    workflows: [Backend and PostgreSQL, Playwright browser tests, Development and production isolation]
+    workflows: [Backend and PostgreSQL, Playwright browser tests, Development and production isolation, Observability end-to-end]
     types: [completed]
     branches: [main]
 permissions:
@@ -25,7 +25,7 @@ jobs:
             const sha = context.payload.workflow_run.head_sha;
             const {data: branch} = await github.rest.repos.getBranch({...context.repo, branch: 'main'});
             if (branch.commit.sha !== sha) return;
-            for (const workflow_id of ['backend.yml', 'e2e.yml', 'isolation.yml']) {
+            for (const workflow_id of ['backend.yml', 'e2e.yml', 'isolation.yml', 'observability.yml']) {
               const {data} = await github.rest.actions.listWorkflowRuns({
                 ...context.repo, workflow_id, branch: 'main', event: 'push', head_sha: sha, per_page: 1
               });

@@ -26,6 +26,11 @@ env = dict(os.environ, WECODE_IMAGE=payload["image"], APP_VERSION=payload["versi
            APP_ENV=name, APP_PORT="8081" if name == "development" else "8082")
 command = ["docker", "compose", "--env-file", str(config), "-p",
            "wecode-dev" if name == "development" else "wecode-prod", "-f", str(compose)]
+resolved = json.loads(subprocess.check_output(command + ["config", "--format", "json"], env=env))
+if resolved["services"]["web"]["environment"].get("OTEL_EXPORTER_OTLP_ENDPOINT") == "http://collector:4318":
+    override = directory / "telemetry.compose.yaml"
+    override.write_text(payload["telemetry_compose"])
+    command += ["-f", str(override)]
 subprocess.run(command + ["config", "--quiet"], env=env, check=True)
 subprocess.run(command + ["pull"], env=env, check=True)
 subprocess.run(command + ["up", "-d", "--wait", "--wait-timeout", "180"], env=env, check=True)
@@ -63,7 +68,10 @@ def main():
     key, known = os.environ.get("DEPLOY_SSH_KEY", ""), os.environ.get("DEPLOY_KNOWN_HOSTS", "")
     if not key.strip() or not known.strip():
         raise SystemExit("Missing deployment SSH key or pinned known-hosts entry")
-    payload = vars(args) | {"compose": Path(__file__).with_name("compose.yaml").read_text()}
+    payload = vars(args) | {
+        "compose": Path(__file__).with_name("compose.yaml").read_text(),
+        "telemetry_compose": Path(__file__).with_name("telemetry.compose.yaml").read_text(),
+    }
     program = REMOTE.replace("PAYLOAD", repr(payload), 1)
     with tempfile.TemporaryDirectory() as temporary:
         directory = Path(temporary)

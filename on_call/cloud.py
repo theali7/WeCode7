@@ -30,6 +30,16 @@ def choose_source(sources, kind, requested=None):
     return candidates[0]["uid"]
 
 
+def select_source(sources, kind, requested=None):
+    candidates = [item for item in sources if item.get("type") == kind]
+    if not requested and len(candidates) > 1:
+        print("Available " + kind + " sources:")
+        for item in candidates:
+            print("  " + item["uid"] + "  " + item.get("name", ""))
+        requested = input("WeCode " + kind + " source UID: ").strip()
+    return choose_source(sources, kind, requested)
+
+
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -53,8 +63,8 @@ def main():
     # Validate the destination before sending a credential to it.
     cloud, _, _ = cloud_configuration(config)
     sources = fetch(args.grafana_url.rstrip("/") + "/api/datasources", cloud["alerts"])
-    config["ONCALL_PROMETHEUS_DATASOURCE_UID"] = choose_source(sources, "prometheus", args.prometheus_uid)
-    config["ONCALL_LOKI_DATASOURCE_UID"] = choose_source(sources, "loki", args.loki_uid)
+    config["ONCALL_PROMETHEUS_DATASOURCE_UID"] = select_source(sources, "prometheus", args.prometheus_uid)
+    config["ONCALL_LOKI_DATASOURCE_UID"] = select_source(sources, "loki", args.loki_uid)
     cloud, prometheus, loki = cloud_configuration(config)
     alerts = fetch(cloud["alerts_url"], cloud["alerts"])
     if not isinstance(alerts, list):

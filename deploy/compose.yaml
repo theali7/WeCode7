@@ -8,6 +8,10 @@ services:
       DATABASE_URL: "postgresql://wecode:${POSTGRES_PASSWORD:?Set a unique database password}@db:5432/wecode"
       AUTH_SECRET: "${AUTH_SECRET:?Set a unique authentication secret}"
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?Set the HTTPS origin for this environment}"
+      APP_ENV: "${APP_ENV:?Set APP_ENV}"
+      APP_VERSION: "${APP_VERSION:?Set APP_VERSION}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
+      OTEL_EXPORTER_OTLP_HEADERS: "${OTEL_EXPORTER_OTLP_HEADERS:-}"
       OTEL_SERVICE_NAME: wecode-api
       OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=${APP_ENV:?Set APP_ENV},service.version=${APP_VERSION:?Set APP_VERSION}"
     depends_on:

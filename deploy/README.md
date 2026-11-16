@@ -7,8 +7,8 @@ database volumes, credentials and tokens. These were disposable test environment
 not persistent public deployments.
 
 The deployment workflows in this branch require a configured SSH host. They do not
-provision servers or modify the existing Render deployment. OpenTelemetry resource
-metadata is present in Compose, but telemetry export is a later step.
+provision servers or modify the existing Render deployment. OpenTelemetry instrumentation is included. Set an accessible OTLP/HTTP receiver
+endpoint to enable export; see ../observability/README.md.
 
 ## Server requirements
 

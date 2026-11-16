@@ -61,6 +61,14 @@ jobs:
           platforms: linux/amd64
           build-args: APP_VERSION=${{ needs.gate.outputs.sha }}
           tags: ghcr.io/theali7/wecode7:${{ needs.gate.outputs.sha }}
+      - name: Resolve the published linux amd64 image manifest
+        id: platform
+        env:
+          INDEX: ghcr.io/theali7/wecode7@${{ steps.build.outputs.digest }}
+          INDEX_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker buildx imagetools inspect "$INDEX" --raw > image-manifest.json
+          python3 -m deploy.image_digest "$INDEX_DIGEST" < image-manifest.json >> "$GITHUB_OUTPUT"
       - name: Deploy the published digest to development
         env:
           WECODE_DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET || 'render' }}
@@ -70,12 +78,12 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-          IMAGE: ghcr.io/theali7/wecode7@${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/theali7/wecode7@${{ steps.platform.outputs.digest }}
           VERSION: ${{ needs.gate.outputs.sha }}
         run: python3 -m deploy.release --environment development --image "$IMAGE" --version "$VERSION"
       - name: Record the healthy development release
         env:
-          IMAGE: ghcr.io/theali7/wecode7@${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/theali7/wecode7@${{ steps.platform.outputs.digest }}
           VERSION: ${{ needs.gate.outputs.sha }}
         run: |
           python3 - <<'PY'

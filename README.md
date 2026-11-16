@@ -1,4 +1,4 @@
-# WeCode Assignment 2
+# WeCode 7
 
 Live demonstration: https://wecode-assignment2.onrender.com
 

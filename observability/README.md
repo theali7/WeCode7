@@ -53,7 +53,8 @@ It uses disposable requests and no external telemetry provider or real database.
 The repository includes a separate Collector/Prometheus/Loki/Tempo/Grafana stack.
 It uses Docker volumes and seven-day retention for stored telemetry. This is a
 single-host educational setup, without high availability or off-host backups.
-Persistent hosting, alerting and the AI on-call worker remain pending.
+Alert rules and an on-call worker are included; see ../on_call/README.md.
+Persistent hosting and a real authenticated AI investigation remain unverified.
 
 ## Start the local observability stack
 

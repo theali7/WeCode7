@@ -45,8 +45,8 @@ Existing accounts and databases are not copied between these environments.
 ## Automatic development deployment
 
 After merging the workflows into main, pushes trigger the existing backend,
-browser and isolation checks. The development workflow reacts when checks finish
-and proceeds only when all three checks passed for the current main commit.
+browser, isolation and observability checks. The development workflow reacts when checks finish
+and proceeds only when all four checks passed for the current main commit.
 
 It builds and publishes one linux/amd64 image, deploys its immutable digest via SSH,
 and verifies container health and /api/health before recording the release.
@@ -95,4 +95,5 @@ Database migrations run at application startup; image rollback cannot reverse
 schema changes. Back up each database before releases with schema changes.
 
 Persistent hosting, server secrets and HTTPS must be configured before live release
-verification. Dashboards, alerts and the AI responder remain separate work.
+verification. Dashboard, alert and on-call worker code is included; a real AI
+investigation additionally requires an authenticated Codex CLI. See ../on_call/README.md.
